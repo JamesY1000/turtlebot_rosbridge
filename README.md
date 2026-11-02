@@ -112,9 +112,40 @@ python examples/laser_scan.py 192.168.1.213
 python examples/teleop.py 192.168.1.213
 ```
 
-The camera and laser-scan visualisers exit with `Q` or Escape. The teleop
-controls are W/S for forward/backward, A/D for turning, Space for an immediate
-stop, and Escape to exit.
+The camera and laser-scan visualisers exit with `Q` or Escape.
+
+### Keyboard teleoperation
+
+Teleop reads the **focused Linux terminal**, using Python's standard library.
+This supports Wayland/X11 desktops and interactive SSH sessions.
+There is no keyboard selection flag or `pynput` requirement. No Enter key is needed:
+
+```bash
+python examples/teleop.py ROBOT_IP
+```
+
+Use W/S for forward/backward, A/D for turning, Space to stop, and Q/Escape or
+Ctrl+C to exit. Uppercase keys also work. Teleop selects one direction
+at a time: A/D turn in place rather than adding a turn to a held W/S command.
+Other keys stop motion.
+
+Terminals do not report key release. Each movement key enables motion for at
+most **0.3 seconds**, renewed by subsequent key repeats. Holding a key uses the
+desktop's repeat settings; there may be a brief stop before the initial repeat
+starts. `--key-timeout 0.6` accommodates a longer repeat delay, but also permits
+motion for up to 0.6 seconds after release or loss of terminal focus. Space
+stops immediately. Keep the terminal focused while controlling the robot.
+
+Use a real interactive Linux terminal. Redirected input and IDE output/debug consoles are not
+supported. Compared with the previous global listener, keys are only read while
+the terminal is focused, combined held keys are not tracked, and release stopping
+uses the timeout above. The ROS connection and velocity command API are unchanged.
+
+Teleop sends zero velocity on startup and exit/error while connected.
+As with other remote command examples, stopping after a lost connection or a
+killed process depends on the robot's own command timeout.
+
+Input tests exercise a Linux pseudo-terminal. No Windows-specific input code is included.
 
 ## Test and build
 
