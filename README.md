@@ -9,6 +9,7 @@ operations a student control loop needs:
 - ping 192.168.1.2XX where XX is the TurtleBot ID   
 - query the latest compressed camera image as a BGR NumPy array;
 - query the latest laser scan as angle and range NumPy arrays;
+- optionally retrieve the complete camera/scan ROS message with `raw=True`;
 - publish linear and angular velocity to `/cmd_vel`;
 - stop and disconnect safely.
 
@@ -61,6 +62,44 @@ with RosbridgeRobot("192.168.1.213") as robot:
 
 `query_image()` returns a copy, so student code may safely annotate or resize it.
 Its colour order is BGR, as expected by OpenCV.
+
+## Raw sensor messages
+
+Pass `raw=True` to the existing image or scan query to get a deep copy of the
+complete ROS message dictionary, including its original `header` and payload:
+
+```python
+from rosbridge_api import RosbridgeRobot
+
+with RosbridgeRobot("192.168.1.213") as robot:
+    message = robot.query_image(timeout=2.0, wait_for_new=True, raw=True)
+    if message is not None:
+        header = message.get("header", {})
+        print(header.get("stamp"), header.get("frame_id"))
+        compressed_data = message["data"]  # Base64 string, not decoded pixels
+
+    scan = robot.query_laser_scan(timeout=2.0, wait_for_new=True, raw=True)
+    if scan is not None:
+        ranges = scan["ranges"]  # Original list, not a NumPy array
+        scan_header = scan.get("header", {})
+```
+
+Without `raw=True`, return types stay unchanged: a BGR NumPy image or `LaserScan`.
+Both modes use the latest successfully decoded message; payloads rejected by
+the existing decoder do not replace either cached representation. Raw results
+preserve all message fields without parsing timestamps or adding receipt times.
+ROS 2 stamps use `sec`/`nanosec`; ROS 1 uses `secs`/`nsecs`. Missing or unusual
+headers are returned as received, so validation belongs in the application.
+
+Timeout and `wait_for_new` behaviour are the same in both modes. Each stream
+shares one query cursor: a raw read also consumes the latest update for a later
+decoded read using `wait_for_new=True`, and vice versa. Reading cached data does
+not make it fresh. To associate headers with pixels or ranges, use one raw
+message and decode its payload; separate queries can return different updates.
+
+Raw dictionaries are deep copies, so editing nested headers or range lists does
+not change the API's cache. `query_joint_states()` already returns the original
+ROS message dictionary and is unchanged by this option.
 
 ## Included examples
 

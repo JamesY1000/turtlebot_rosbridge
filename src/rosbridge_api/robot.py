@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import threading
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -69,10 +70,12 @@ class RosbridgeRobot:
         self._subscribers: dict[str, roslibpy.Topic] = {}
         self._joint_states: Optional[dict] = None
         self._latest_image: Optional[np.ndarray] = None
+        self._latest_image_message: Optional[dict] = None
         self._image_condition = threading.Condition()
         self._image_sequence = 0
         self._last_query_sequence = 0
         self._latest_laser_scan: Optional[LaserScan] = None
+        self._latest_laser_scan_message: Optional[dict] = None
         self._laser_scan_condition = threading.Condition()
         self._laser_scan_sequence = 0
         self._last_laser_scan_query_sequence = 0
@@ -150,18 +153,23 @@ class RosbridgeRobot:
         return self._joint_states
 
     def query_laser_scan(
-        self, timeout: Optional[float] = None, *, wait_for_new: bool = False
-    ) -> Optional[LaserScan]:
-        """Return the latest laser scan with NumPy arrays copied for the caller.
+        self, timeout: Optional[float] = None, *, wait_for_new: bool = False,
+        raw: bool = False,
+    ) -> LaserScan | dict | None:
+        """Return a decoded scan, or its original ROS message when raw=True.
 
         Args:
             timeout: Seconds to wait for a suitable scan. ``None`` waits
                 indefinitely and ``0`` returns immediately.
             wait_for_new: Wait for a scan received after the preceding query.
+                Raw and decoded queries share this cursor.
+            raw: Return a deep copy of the complete ROS message dictionary,
+                including its header and original range lists. Defaults to False.
 
         Returns:
-            A :class:`LaserScan`, or ``None`` if the timeout expires or cleanup
-            interrupts the query.
+            A copied :class:`LaserScan` or raw dictionary from the latest
+            successfully decoded scan. None if timeout or cleanup interrupts
+            the query. Header fields are preserved without interpretation.
         """
         self._require_connection()
         if timeout is not None and timeout < 0:
@@ -184,6 +192,8 @@ class RosbridgeRobot:
                     return None
 
             self._last_laser_scan_query_sequence = self._laser_scan_sequence
+            if raw:
+                return deepcopy(self._latest_laser_scan_message)
             scan = self._latest_laser_scan
             assert scan is not None
             return LaserScan(
@@ -200,18 +210,23 @@ class RosbridgeRobot:
             )
 
     def query_image(
-        self, timeout: Optional[float] = None, *, wait_for_new: bool = False
-    ) -> Optional[np.ndarray]:
-        """Return the latest camera image as a BGR NumPy array copy.
+        self, timeout: Optional[float] = None, *, wait_for_new: bool = False,
+        raw: bool = False,
+    ) -> np.ndarray | dict | None:
+        """Return a BGR image, or its original ROS message when raw=True.
 
         Args:
             timeout: Seconds to wait for a suitable image. ``None`` waits
                 indefinitely and ``0`` returns immediately.
             wait_for_new: Wait for an image received after the preceding query.
+                Raw and decoded queries share this cursor.
+            raw: Return a deep copy of the complete ROS message dictionary,
+                including its header and base64 compressed data. Defaults to False.
 
         Returns:
-            The image, or ``None`` if the timeout expires or cleanup interrupts
-            the query.
+            A copied image or raw dictionary from the latest successfully
+            decoded image. None if timeout or cleanup interrupts the query.
+            Header fields are preserved without interpretation.
         """
         self._require_connection()
         if timeout is not None and timeout < 0:
@@ -232,6 +247,8 @@ class RosbridgeRobot:
                     return None
 
             self._last_query_sequence = self._image_sequence
+            if raw:
+                return deepcopy(self._latest_image_message)
             return self._latest_image.copy()
 
     def cleanup(self) -> None:
@@ -270,9 +287,11 @@ class RosbridgeRobot:
         self._is_setup = False
         with self._image_condition:
             self._latest_image = None
+            self._latest_image_message = None
             self._image_condition.notify_all()
         with self._laser_scan_condition:
             self._latest_laser_scan = None
+            self._latest_laser_scan_message = None
             self._laser_scan_condition.notify_all()
 
     def _add_publisher(
@@ -336,8 +355,10 @@ class RosbridgeRobot:
             image = cv2.imdecode(encoded_image, cv2.IMREAD_COLOR)
             if image is None:
                 return
+            raw_message = deepcopy(dict(message))
             with self._image_condition:
                 self._latest_image = image
+                self._latest_image_message = raw_message
                 self._image_sequence += 1
                 self._image_condition.notify_all()
         except (KeyError, TypeError, ValueError) as exc:
@@ -368,8 +389,10 @@ class RosbridgeRobot:
                 range_min=float(message["range_min"]),
                 range_max=float(message["range_max"]),
             )
+            raw_message = deepcopy(dict(message))
             with self._laser_scan_condition:
                 self._latest_laser_scan = scan
+                self._latest_laser_scan_message = raw_message
                 self._laser_scan_sequence += 1
                 self._laser_scan_condition.notify_all()
         except (KeyError, TypeError, ValueError) as exc:
